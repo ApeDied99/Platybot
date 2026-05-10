@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const http = require('http');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const { handleCommand, handleAutocomplete } = require('./commands');
 const { processBirthdays } = require('./birthdayService');
@@ -10,6 +11,22 @@ if (!token) {
   console.error('Missing DISCORD_TOKEN in .env file.');
   process.exit(1);
 }
+
+const port = Number(process.env.PORT) || 3000;
+const server = http.createServer((req, res) => {
+  if (req.url === '/' || req.url === '/health') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bot is online');
+    return;
+  }
+
+  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Not found');
+});
+
+server.listen(port, () => {
+  console.log(`Web server running on port ${port}`);
+});
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
