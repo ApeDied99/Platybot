@@ -39,13 +39,27 @@ const client = new Client({
 let schedulerInterval = null;
 let schedulerIsRunning = false;
 
+function getCheckIntervalMs() {
+  const parsedMinutes = Number(process.env.BIRTHDAY_CHECK_INTERVAL_MINUTES);
+  if (!Number.isFinite(parsedMinutes)) {
+    return 5 * 60 * 1000;
+  }
+
+  const normalizedMinutes = Math.floor(parsedMinutes);
+  const clampedMinutes = Math.min(60, Math.max(1, normalizedMinutes));
+  return clampedMinutes * 60 * 1000;
+}
+
 function startBirthdayScheduler(discordClient) {
   if (schedulerInterval) {
     console.warn('[scheduler] Birthday scheduler already running, skipping duplicate start');
     return;
   }
 
-  console.log('[scheduler] Starting birthday scheduler (1-minute interval)');
+  const checkIntervalMs = getCheckIntervalMs();
+  const checkIntervalMinutes = Math.floor(checkIntervalMs / 60000);
+
+  console.log(`[scheduler] Starting birthday scheduler (${checkIntervalMinutes}-minute interval)`);
 
   const runTick = async (trigger) => {
     const startedAt = new Date();
@@ -81,7 +95,7 @@ function startBirthdayScheduler(discordClient) {
     runTick('interval').catch((error) => {
       console.error('[scheduler] Interval tick invocation failed:', error);
     });
-  }, 60 * 1000);
+  }, checkIntervalMs);
 }
 
 client.once(Events.ClientReady, (readyClient) => {

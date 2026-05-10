@@ -50,6 +50,7 @@ Environment variables to configure on Render:
 - `TENOR_API_KEY` (optional)
 - `LOG_LEVEL` (optional, one of `error`, `warn`, `info`, `debug`; default: `info`)
 - `BIRTHDAY_SEND_WINDOW_HOURS` (optional, default: `6`)
+- `BIRTHDAY_CHECK_INTERVAL_MINUTES` (optional, default: `5`, min: `1`, max: `60`)
 
 Notes:
 
@@ -69,6 +70,10 @@ Notes:
 - `/edit day:10 month:June timezone:America/New_York year:2000(optional) clear_year:true(optional)`
    - Change only the fields you want.
    - If you change the date, provide both `day` and `month` together.
+- `/greet hours:6`
+   - Admin command (`Manage Server`) for manual catch-up.
+   - Greets users whose birthday is today in their timezone, inside the first `hours` after local midnight, and not already sent this year.
+   - Useful after downtime when automatic `BIRTHDAY_SEND_WINDOW_HOURS` is intentionally small.
 
 ## Notes
 

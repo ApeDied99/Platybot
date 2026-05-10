@@ -4,7 +4,8 @@ const {
   isValidTimezone,
   isValidDayMonth,
   getTimezoneSuggestions,
-  formatBirthday
+  formatBirthday,
+  processBirthdays
 } = require('./birthdayService');
 
 const commands = [
@@ -119,6 +120,19 @@ const commands = [
         .setName('clear_year')
         .setDescription('Remove your saved birth year')
         .setRequired(false)
+    ),
+
+  new SlashCommandBuilder()
+    .setName('greet')
+    .setDescription('Manually greet birthdays not yet sent this year within a local-hour window.')
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addIntegerOption((option) =>
+      option
+        .setName('hours')
+        .setDescription('Local hours after midnight to include (1-24)')
+        .setMinValue(1)
+        .setMaxValue(24)
+        .setRequired(true)
     )
 ];
 
@@ -143,6 +157,44 @@ async function handleCommand(interaction) {
 
     await interaction.editReply({
       content: `Birthday wishes are now set up in <#${interaction.channelId}>.`,
+    });
+    return;
+  }
+
+  if (interaction.commandName === 'greet') {
+    const hours = interaction.options.getInteger('hours', true);
+
+    const summary = await processBirthdays(interaction.client, {
+      trigger: `manual-greet-by-${interaction.user.id}`,
+      onlyGuildId: interaction.guildId,
+      sendWindowHoursOverride: hours
+    });
+
+    const guildSummary = summary.guildSummaries[interaction.guildId] || {
+      usersChecked: 0,
+      usersEligible: 0,
+      usersSent: 0,
+      usersAlreadySent: 0,
+      usersInvalidTimezone: 0,
+      sendErrors: 0,
+      skippedNoSetupChannel: 0,
+      skippedInvalidChannel: 0,
+      channelFetchErrors: 0
+    };
+
+    await interaction.editReply({
+      content:
+        `Manual greet run finished for this server.\n` +
+        `Window: first **${hours}** local hour(s) after midnight.\n` +
+        `Checked: **${guildSummary.usersChecked}**\n` +
+        `Eligible (birthday + in window + not sent): **${guildSummary.usersEligible}**\n` +
+        `Sent now: **${guildSummary.usersSent}**\n` +
+        `Already sent this year: **${guildSummary.usersAlreadySent}**\n` +
+        `Invalid timezone entries: **${guildSummary.usersInvalidTimezone}**\n` +
+        `Channel fetch errors: **${guildSummary.channelFetchErrors}**\n` +
+        `Invalid setup channel: **${guildSummary.skippedInvalidChannel}**\n` +
+        `No setup channel: **${guildSummary.skippedNoSetupChannel}**\n` +
+        `Send errors: **${guildSummary.sendErrors}**`
     });
     return;
   }

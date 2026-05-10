@@ -46,6 +46,28 @@ function getSendWindowHours() {
   return normalized;
 }
 
+function normalizeSendWindowHours(overrideValue) {
+  if (overrideValue === undefined || overrideValue === null) {
+    return getSendWindowHours();
+  }
+
+  const parsed = Number(overrideValue);
+  if (!Number.isFinite(parsed)) {
+    return getSendWindowHours();
+  }
+
+  const normalized = Math.floor(parsed);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 24) {
+    return 24;
+  }
+
+  return normalized;
+}
+
 const fallbackTimezones = [
   'UTC',
   'Europe/Berlin',
@@ -207,9 +229,25 @@ function buildBirthdayMessage(userId, entry, nowInZone) {
 }
 
 async function processBirthdays(client, options = {}) {
-  const sendWindowHours = getSendWindowHours();
+  const sendWindowHours = normalizeSendWindowHours(options.sendWindowHoursOverride);
   const data = loadData();
-  const guildEntries = Object.entries(data.guilds);
+  const allGuildEntries = Object.entries(data.guilds);
+  const guildEntries = options.onlyGuildId
+    ? allGuildEntries.filter(([guildId]) => guildId === options.onlyGuildId)
+    : allGuildEntries;
+  const summary = {
+    guildsScanned: guildEntries.length,
+    usersChecked: 0,
+    usersEligible: 0,
+    usersSent: 0,
+    usersAlreadySent: 0,
+    usersInvalidTimezone: 0,
+    sendErrors: 0,
+    skippedNoSetupChannel: 0,
+    skippedInvalidChannel: 0,
+    channelFetchErrors: 0,
+    guildSummaries: {}
+  };
 
   log('info', 'Birthday scan started', {
     trigger: options.trigger || 'unknown',
@@ -220,12 +258,27 @@ async function processBirthdays(client, options = {}) {
   });
 
   for (const [guildId, guildData] of guildEntries) {
+    const guildSummary = {
+      usersChecked: 0,
+      usersEligible: 0,
+      usersSent: 0,
+      usersAlreadySent: 0,
+      usersInvalidTimezone: 0,
+      sendErrors: 0,
+      skippedNoSetupChannel: 0,
+      skippedInvalidChannel: 0,
+      channelFetchErrors: 0
+    };
+    summary.guildSummaries[guildId] = guildSummary;
+
     if (!guildData.gifHistory || typeof guildData.gifHistory !== 'object') {
       guildData.gifHistory = {};
     }
     pruneGifHistory(guildData);
 
     if (!guildData.setupChannelId) {
+      summary.skippedNoSetupChannel += 1;
+      guildSummary.skippedNoSetupChannel += 1;
       log('debug', `Skipping guild ${guildId} because setupChannelId is missing`);
       continue;
     }
@@ -234,6 +287,8 @@ async function processBirthdays(client, options = {}) {
     try {
       channel = await client.channels.fetch(guildData.setupChannelId);
     } catch (error) {
+      summary.channelFetchErrors += 1;
+      guildSummary.channelFetchErrors += 1;
       log('warn', `Failed to fetch channel ${guildData.setupChannelId} for guild ${guildId}`, {
         error: String(error)
       });
@@ -241,6 +296,8 @@ async function processBirthdays(client, options = {}) {
     }
 
     if (!channel || !channel.isTextBased()) {
+      summary.skippedInvalidChannel += 1;
+      guildSummary.skippedInvalidChannel += 1;
       log('warn', `Configured channel is invalid or not text-based for guild ${guildId}`, {
         setupChannelId: guildData.setupChannelId
       });
@@ -253,8 +310,13 @@ async function processBirthdays(client, options = {}) {
     });
 
     for (const [userId, birthday] of Object.entries(guildData.birthdays || {})) {
+      summary.usersChecked += 1;
+      guildSummary.usersChecked += 1;
+
       const nowInZone = DateTime.now().setZone(birthday.timezone);
       if (!nowInZone.isValid) {
+        summary.usersInvalidTimezone += 1;
+        guildSummary.usersInvalidTimezone += 1;
         log('warn', `Skipping user ${userId} in guild ${guildId} due to invalid timezone`, {
           timezone: birthday.timezone
         });
@@ -264,6 +326,11 @@ async function processBirthdays(client, options = {}) {
       const isBirthday = nowInZone.month === birthday.month && nowInZone.day === birthday.day;
       const isDueTime = nowInZone.hour < sendWindowHours;
       const alreadySent = guildData.lastSent?.[userId] === nowInZone.year;
+
+      if (alreadySent) {
+        summary.usersAlreadySent += 1;
+        guildSummary.usersAlreadySent += 1;
+      }
 
       log('debug', `Birthday check for user ${userId} in guild ${guildId}`, {
         timezone: birthday.timezone,
@@ -278,6 +345,9 @@ async function processBirthdays(client, options = {}) {
       if (!isBirthday || !isDueTime || alreadySent) {
         continue;
       }
+
+      summary.usersEligible += 1;
+      guildSummary.usersEligible += 1;
 
       log('info', `Sending birthday message for user ${userId} in guild ${guildId}`, {
         timezone: birthday.timezone,
@@ -297,11 +367,15 @@ async function processBirthdays(client, options = {}) {
       try {
         await channel.send({ content });
         guildData.lastSent[userId] = nowInZone.year;
+        summary.usersSent += 1;
+        guildSummary.usersSent += 1;
 
         if (gif?.id && !guildData.gifHistory[dateKey].includes(gif.id)) {
           guildData.gifHistory[dateKey].push(gif.id);
         }
       } catch (error) {
+        summary.sendErrors += 1;
+        guildSummary.sendErrors += 1;
         log('error', `Failed to send birthday message for user ${userId} in guild ${guildId}`, {
           error: String(error)
         });
@@ -313,8 +387,11 @@ async function processBirthdays(client, options = {}) {
   saveData(data);
   log('info', 'Birthday scan completed', {
     trigger: options.trigger || 'unknown',
-    nowIso: new Date().toISOString()
+    nowIso: new Date().toISOString(),
+    summary
   });
+
+  return summary;
 }
 
 module.exports = {
