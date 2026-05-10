@@ -12,6 +12,10 @@ if (!token) {
   process.exit(1);
 }
 
+console.log('[startup] Booting Platybot');
+console.log(`[startup] Node.js version: ${process.version}`);
+console.log(`[startup] Render environment: ${process.env.RENDER === 'true' ? 'yes' : 'no'}`);
+
 const port = Number(process.env.PORT) || 3000;
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/health') {
@@ -25,25 +29,64 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
-  console.log(`Web server running on port ${port}`);
+  console.log(`[startup] Web server running on port ${port}`);
 });
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-client.once(Events.ClientReady, (readyClient) => {
-  console.log(`Logged in as ${readyClient.user.tag}`);
+let schedulerInterval = null;
+let schedulerIsRunning = false;
 
-  processBirthdays(client).catch((error) => {
-    console.error('Initial birthday check failed:', error);
+function startBirthdayScheduler(discordClient) {
+  if (schedulerInterval) {
+    console.warn('[scheduler] Birthday scheduler already running, skipping duplicate start');
+    return;
+  }
+
+  console.log('[scheduler] Starting birthday scheduler (1-minute interval)');
+
+  const runTick = async (trigger) => {
+    const startedAt = new Date();
+
+    if (schedulerIsRunning) {
+      console.warn(`[scheduler] Previous tick still running at ${startedAt.toISOString()}, skipping this tick`);
+      return;
+    }
+
+    schedulerIsRunning = true;
+    console.log(`[scheduler] Tick started (${trigger}) at ${startedAt.toISOString()}`);
+
+    try {
+      await processBirthdays(discordClient, {
+        trigger,
+        tickStartedAtIso: startedAt.toISOString()
+      });
+
+      const durationMs = Date.now() - startedAt.getTime();
+      console.log(`[scheduler] Tick finished (${trigger}) in ${durationMs} ms`);
+    } catch (error) {
+      console.error(`[scheduler] Tick failed (${trigger}):`, error);
+    } finally {
+      schedulerIsRunning = false;
+    }
+  };
+
+  runTick('initial-after-ready').catch((error) => {
+    console.error('[scheduler] Initial tick invocation failed:', error);
   });
 
-  setInterval(() => {
-    processBirthdays(client).catch((error) => {
-      console.error('Scheduled birthday check failed:', error);
+  schedulerInterval = setInterval(() => {
+    runTick('interval').catch((error) => {
+      console.error('[scheduler] Interval tick invocation failed:', error);
     });
   }, 60 * 1000);
+}
+
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`[startup] Logged in as ${readyClient.user.tag}`);
+  startBirthdayScheduler(client);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -84,6 +127,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
   }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[process] Uncaught exception:', error);
 });
 
 client.login(token);

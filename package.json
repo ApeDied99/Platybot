@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
-    "deploy": "node src/deploy-commands.js"
+    "deploy": "node src/deploy-commands.js",
+    "postinstall": "node -e \"['discord.js','dotenv','luxon'].forEach((pkg)=>require.resolve(pkg)); console.log('Dependency verification passed');\""
   },
   "engines": {
     "node": ">=20.0.0"

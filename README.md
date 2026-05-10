@@ -36,6 +36,27 @@ A Discord bot that stores birthdays and posts birthday wishes at `00:01` in each
    npm start
    ```
 
+## Render Deployment
+
+- Service type: Web Service
+- Build command: `npm install`
+- Start command: `npm start`
+- Health check path: `/health`
+
+Environment variables to configure on Render:
+
+- `DISCORD_TOKEN` (required)
+- `CLIENT_ID` (required for command deployment)
+- `TENOR_API_KEY` (optional)
+- `LOG_LEVEL` (optional, one of `error`, `warn`, `info`, `debug`; default: `info`)
+- `BIRTHDAY_SEND_WINDOW_HOURS` (optional, default: `6`)
+
+Notes:
+
+- Dependency verification runs automatically after install via `postinstall`.
+- Birthday checks run every minute and are started only after Discord emits ready.
+- Birthday sends are allowed within the first hours of a birthday day (timezone-local) to reduce misses if host wake-up is delayed.
+
 ## Command Usage
 
 - `/setup`
@@ -53,5 +74,5 @@ A Discord bot that stores birthdays and posts birthday wishes at `00:01` in each
 
 - Timezone must be an IANA timezone (for example: `Europe/Berlin`, `America/New_York`, `Asia/Tokyo`).
 - Birthdays are stored in `data/birthdays.json`.
-- Birthday messages are checked every minute and sent once per year at local `00:01`.
+- Birthday messages are checked every minute and sent once per year during the configured send window after local midnight.
 - GIFs are fetched from the Tenor public API. If not enough unique GIFs are available for a date, repeats can still happen as a fallback.

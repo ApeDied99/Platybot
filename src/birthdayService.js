@@ -3,6 +3,48 @@ const { loadData, saveData } = require('./database');
 
 const TENOR_API_KEY = process.env.TENOR_API_KEY || 'LIVDSRZULELA';
 const TENOR_CLIENT_KEY = 'platybot';
+const LOG_LEVELS = {
+  error: 0,
+  warn: 1,
+  info: 2,
+  debug: 3
+};
+const configuredLogLevel = String(process.env.LOG_LEVEL || 'info').toLowerCase();
+const activeLogLevel = Object.hasOwn(LOG_LEVELS, configuredLogLevel)
+  ? LOG_LEVELS[configuredLogLevel]
+  : LOG_LEVELS.info;
+
+function log(level, message, details) {
+  const normalizedLevel = Object.hasOwn(LOG_LEVELS, level) ? level : 'info';
+  if (LOG_LEVELS[normalizedLevel] > activeLogLevel) {
+    return;
+  }
+
+  const prefix = `[birthday:${normalizedLevel}] ${message}`;
+  if (details === undefined) {
+    console[normalizedLevel](prefix);
+  } else {
+    console[normalizedLevel](prefix, details);
+  }
+}
+
+function getSendWindowHours() {
+  const parsed = Number(process.env.BIRTHDAY_SEND_WINDOW_HOURS);
+  if (!Number.isFinite(parsed)) {
+    return 6;
+  }
+
+  const normalized = Math.floor(parsed);
+  if (normalized < 1) {
+    return 1;
+  }
+
+  if (normalized > 24) {
+    return 24;
+  }
+
+  return normalized;
+}
 
 const fallbackTimezones = [
   'UTC',
@@ -164,9 +206,18 @@ function buildBirthdayMessage(userId, entry, nowInZone) {
   return pickRandom(noAgeTemplates);
 }
 
-async function processBirthdays(client) {
+async function processBirthdays(client, options = {}) {
+  const sendWindowHours = getSendWindowHours();
   const data = loadData();
   const guildEntries = Object.entries(data.guilds);
+
+  log('info', 'Birthday scan started', {
+    trigger: options.trigger || 'unknown',
+    tickStartedAtIso: options.tickStartedAtIso || null,
+    guildCount: guildEntries.length,
+    sendWindowHours,
+    nowIso: new Date().toISOString()
+  });
 
   for (const [guildId, guildData] of guildEntries) {
     if (!guildData.gifHistory || typeof guildData.gifHistory !== 'object') {
@@ -175,33 +226,63 @@ async function processBirthdays(client) {
     pruneGifHistory(guildData);
 
     if (!guildData.setupChannelId) {
+      log('debug', `Skipping guild ${guildId} because setupChannelId is missing`);
       continue;
     }
 
     let channel;
     try {
       channel = await client.channels.fetch(guildData.setupChannelId);
-    } catch {
+    } catch (error) {
+      log('warn', `Failed to fetch channel ${guildData.setupChannelId} for guild ${guildId}`, {
+        error: String(error)
+      });
       continue;
     }
 
     if (!channel || !channel.isTextBased()) {
+      log('warn', `Configured channel is invalid or not text-based for guild ${guildId}`, {
+        setupChannelId: guildData.setupChannelId
+      });
       continue;
     }
+
+    log('debug', `Scanning guild ${guildId}`, {
+      setupChannelId: guildData.setupChannelId,
+      birthdayCount: Object.keys(guildData.birthdays || {}).length
+    });
 
     for (const [userId, birthday] of Object.entries(guildData.birthdays || {})) {
       const nowInZone = DateTime.now().setZone(birthday.timezone);
       if (!nowInZone.isValid) {
+        log('warn', `Skipping user ${userId} in guild ${guildId} due to invalid timezone`, {
+          timezone: birthday.timezone
+        });
         continue;
       }
 
       const isBirthday = nowInZone.month === birthday.month && nowInZone.day === birthday.day;
-      const isDueTime = nowInZone.hour === 0 && nowInZone.minute === 1;
+      const isDueTime = nowInZone.hour < sendWindowHours;
       const alreadySent = guildData.lastSent?.[userId] === nowInZone.year;
+
+      log('debug', `Birthday check for user ${userId} in guild ${guildId}`, {
+        timezone: birthday.timezone,
+        localTime: nowInZone.toISO(),
+        birthdayDay: birthday.day,
+        birthdayMonth: birthday.month,
+        isBirthday,
+        isDueTime,
+        alreadySent
+      });
 
       if (!isBirthday || !isDueTime || alreadySent) {
         continue;
       }
+
+      log('info', `Sending birthday message for user ${userId} in guild ${guildId}`, {
+        timezone: birthday.timezone,
+        localTime: nowInZone.toISO()
+      });
 
       const message = buildBirthdayMessage(userId, birthday, nowInZone);
       const dateKey = nowInZone.toISODate();
@@ -220,13 +301,20 @@ async function processBirthdays(client) {
         if (gif?.id && !guildData.gifHistory[dateKey].includes(gif.id)) {
           guildData.gifHistory[dateKey].push(gif.id);
         }
-      } catch {
+      } catch (error) {
+        log('error', `Failed to send birthday message for user ${userId} in guild ${guildId}`, {
+          error: String(error)
+        });
         // Ignore send errors so one broken guild/user does not block the scheduler.
       }
     }
   }
 
   saveData(data);
+  log('info', 'Birthday scan completed', {
+    trigger: options.trigger || 'unknown',
+    nowIso: new Date().toISOString()
+  });
 }
 
 module.exports = {
